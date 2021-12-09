@@ -10,22 +10,21 @@ import { SimpleWebSocketServer } from "simple-websockets-server";
 import { MIRVPGL } from "./hlae";
 import { Connection } from "node-vmix";
 
-
 export const argConfig = {
     order: [
-		{
-			id: 'multikills',
-			active: true
-		},
-		{
-			id: 'headshots',
-			active: true
-		},
-		{
-			id: 'teamkill',
-			active: false
-		}
-	],
+        {
+            id: 'multikills',
+            active: true
+        },
+        {
+            id: 'headshots',
+            active: true
+        },
+        {
+            id: 'teamkill',
+            active: false
+        }
+    ],
     saveClips: false
 }
 
@@ -35,16 +34,19 @@ const RADIUS_TIME = 1500;
 const ENABLE_VMIX = true;
 const now = () => (new Date()).getTime();
 
+function delay(ms: number) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
 
 export interface ARGKillEntry {
-	killer: string,
-	timestamp: number,
-	round: number,
-	killerHealth: number,
-	newKills: number,
+    killer: string,
+    timestamp: number,
+    round: number,
+    killerHealth: number,
+    newKills: number,
     name: string
-	teamkill: boolean;
-	headshot: boolean;
+    teamkill: boolean;
+    headshot: boolean;
 }
 
 export interface Swap {
@@ -57,21 +59,21 @@ const comparisons: { [x: string]: (killToCheck: ARGKillEntry, killToCompare: ARG
         const killsOfPlayerOne = allKills.filter(kill => kill.killer === killToCheck.killer).length;
         const killsOfPlayerTwo = allKills.filter(kill => kill.killer === killToCompare.killer).length;
 
-        if(killsOfPlayerOne > killsOfPlayerTwo){
+        if (killsOfPlayerOne > killsOfPlayerTwo) {
             return true;
-        } else if(killsOfPlayerTwo > killsOfPlayerOne){
+        } else if (killsOfPlayerTwo > killsOfPlayerOne) {
             return false;
         }
 
         return null;
     },
     headshots: (killToCheck: ARGKillEntry, killToCompare: ARGKillEntry) => {
-        if(killToCheck.headshot === killToCompare.headshot) return null;
+        if (killToCheck.headshot === killToCompare.headshot) return null;
 
         return killToCheck.headshot;
     },
     teamkill: (killToCheck: ARGKillEntry, killToCompare: ARGKillEntry) => {
-        if(killToCheck.teamkill === killToCompare.teamkill) return null;
+        if (killToCheck.teamkill === killToCompare.teamkill) return null;
 
         return killToCheck.teamkill;
     },
@@ -80,10 +82,10 @@ const comparisons: { [x: string]: (killToCheck: ARGKillEntry, killToCompare: ARG
 const isKillBetter = (killToCheck: ARGKillEntry, killToCompare: ARGKillEntry, allKills: ARGKillEntry[]) => {
     const order = argConfig.order.filter(item => item.active).map(item => item.id);
 
-    for(const orderType of order){
-        if(orderType in comparisons){
+    for (const orderType of order) {
+        if (orderType in comparisons) {
             const result = comparisons[orderType](killToCheck, killToCompare, allKills);
-            if(result === null) continue;
+            if (result === null) continue;
             return result;
         }
     }
@@ -92,19 +94,19 @@ const isKillBetter = (killToCheck: ARGKillEntry, killToCompare: ARGKillEntry, al
 }
 
 const isKillWorthShowing = (kill: ARGKillEntry, allKills: ARGKillEntry[]) => {
-    if(kill.killerHealth === 0) return false;
+    if (kill.killerHealth === 0) return false;
 
-    const conflictingKills = allKills.filter(exampleKill => exampleKill !== kill && exampleKill.killer !== kill.killer && exampleKill.killerHealth > 0).filter(exampleKill => Math.abs(kill.timestamp - exampleKill.timestamp) <= RADIUS_TIME*2);
-   
-    if(!conflictingKills.length) return true;
+    const conflictingKills = allKills.filter(exampleKill => exampleKill !== kill && exampleKill.killer !== kill.killer && exampleKill.killerHealth > 0).filter(exampleKill => Math.abs(kill.timestamp - exampleKill.timestamp) <= RADIUS_TIME * 2);
+
+    if (!conflictingKills.length) return true;
 
     const conflictingAndBetterKills = conflictingKills.filter(conflicting => isKillBetter(kill, conflicting, allKills));
 
-    if(!conflictingAndBetterKills.length) return true;
+    if (!conflictingAndBetterKills.length) return true;
 
     const willConflictedNotBeShown = conflictingAndBetterKills.every(conflicting => !isKillWorthShowing(conflicting, allKills));
-    
-    if(willConflictedNotBeShown){
+
+    if (willConflictedNotBeShown) {
         return true;
     }
     return false;
@@ -115,16 +117,16 @@ export class ARGQueue {
     private swaps: Swap[];
     private pgl: MIRVPGL;
 
-    constructor(server: SimpleWebSocketServer){
+    constructor(server: SimpleWebSocketServer) {
         this.kills = [];
         this.swaps = [];
         this.pgl = new MIRVPGL(server);
     }
 
     swapToPlayer = (player: { steamid?: string, name?: string }) => {
-        if(player.steamid){
+        if (player.steamid) {
             this.pgl.execute(`spec_player_by_accountid ${player.steamid}`);
-        } else if(player.name){
+        } else if (player.name) {
             this.pgl.execute(`spec_player_by_name ${player.name}`);
         }
     }
@@ -137,25 +139,25 @@ export class ARGQueue {
             this.swapToPlayer({ steamid: kill.killer });
         }, timeToExecute);
 
-        const timeouts = [ timeout ];
-        if(ENABLE_VMIX){
+        const timeouts = [timeout];
+        if (ENABLE_VMIX) {
             const timeToMarkIn = timeToKill - RADIUS_TIME;
             const timeToMarkOut = timeToKill + RADIUS_TIME;
 
-            if(!prev || Math.abs(prev.timestamp - kill.timestamp) > RADIUS_TIME*2){
+            if (!prev || Math.abs(prev.timestamp - kill.timestamp) > RADIUS_TIME * 2) {
                 const markInTimeout = setTimeout(async () => {
                     await vMix.send({ Function: 'ReplayLive' });
                     await vMix.send({ Function: 'ReplayMarkIn' });
                 }, timeToMarkIn);
-    
+
                 timeouts.push(markInTimeout);
             }
-    
-            if(!next || Math.abs(next.timestamp - kill.timestamp) > RADIUS_TIME*2){
+
+            if (!next || Math.abs(next.timestamp - kill.timestamp) > RADIUS_TIME * 2) {
                 const markOutTimeout = setTimeout(async () => {
                     await vMix.send({ Function: 'ReplayMarkOut' });
                 }, timeToMarkOut);
-    
+
                 timeouts.push(markOutTimeout);
             }
         }
@@ -169,12 +171,12 @@ export class ARGQueue {
 
         const interestingKills = this.kills.filter(kill => isKillWorthShowing(kill, this.kills)).sort((a, b) => a.timestamp - b.timestamp);
 
-        interestingKills.forEach((kill, index, array) => this.generateSwap(kill, array[index-1] || null, array[index+1] || null));
+        interestingKills.forEach((kill, index, array) => this.generateSwap(kill, array[index - 1] || null, array[index + 1] || null));
     }
 
     clear = async () => {
-        for (let i = 0; i < 10; i++){
-            if(argConfig.saveClips){
+        for (let i = 0; i < 10; i++) {
+            if (argConfig.saveClips) {
                 await vMix.send({ Function: 'ReplayMoveLastEvent', Value: '9' });
             } else {
                 await vMix.send({ Function: 'ReplayDeleteLastEvent' });
@@ -182,8 +184,12 @@ export class ARGQueue {
         }
     }
 
+
+
     show = async () => {
+        await delay(5000);
         await vMix.send({ Function: 'ReplayPlayAllEventsToOutput' });
+
     }
 
     add = (kills: ARGKillEntry[]) => {
@@ -192,5 +198,7 @@ export class ARGQueue {
 
         this.regenerate();
     }
+
 }
+
 
