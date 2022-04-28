@@ -1,204 +1,273 @@
 /**
  * Queue lifecycle after adding kill:
- * 
+ *
  * 1. We clear all scheduled observing
  * 2. Get kills to show
  * 3. Schedule observing
  */
 
-import { SimpleWebSocketServer } from "simple-websockets-server";
-import { MIRVPGL } from "./hlae";
-import { Connection } from "node-vmix";
+import { SimpleWebSocketServer } from 'simple-websockets-server';
+import { MIRVPGL } from './hlae';
+import { Connection } from 'node-vmix';
+import { app } from 'electron';
+import path from 'path';
+import fs from 'fs';
+
+const configPath = path.join(app.getPath('userData'), 'config.json');
 
 export const argConfig = {
-    order: [
-        {
-            id: 'multikills',
-            active: true
-        },
-        {
-            id: 'headshots',
-            active: true
-        },
-        {
-            id: 'teamkill',
-            active: false
-        }
-    ],
-    saveClips: false
+	order: [
+		{
+			id: 'multikills',
+			active: true
+		},
+		{
+			id: 'headshots',
+			active: true
+		},
+		{
+			id: 'teamkill',
+			active: false
+		}
+	],
+	preTime: 1500,
+	postTime: 1500,
+	saveClips: false
+};
+
+let config = { vMixAddress: 'localhost' };
+
+if (fs.existsSync(configPath)) {
+	try {
+		config = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as { vMixAddress: string };
+	} catch {}
+} else {
+	fs.writeFileSync(configPath, JSON.stringify(config), 'utf-8');
 }
 
-const vMix = new Connection("localhost");
+const vMix = new Connection(config?.vMixAddress || 'localhost');
 
-const RADIUS_TIME = 1500;
 const ENABLE_VMIX = true;
-const now = () => (new Date()).getTime();
-
-function delay(ms: number) {
-    return new Promise(resolve => setTimeout(resolve, ms));
-}
+const now = () => new Date().getTime();
 
 export interface ARGKillEntry {
-    killer: string,
-    timestamp: number,
-    round: number,
-    killerHealth: number,
-    newKills: number,
-    name: string
-    teamkill: boolean;
-    headshot: boolean;
+	killer: string;
+	timestamp: number;
+	round: number;
+	killerHealth: number;
+	newKills: number;
+	weapon?: string;
+	victim?: string;
+	name: string;
+	teamkill: boolean;
+	headshot: boolean;
 }
 
 export interface Swap {
-    kill: ARGKillEntry,
-    timeouts: NodeJS.Timeout[],
+	kill: ARGKillEntry;
+	timeouts: NodeJS.Timeout[];
 }
 
-const comparisons: { [x: string]: (killToCheck: ARGKillEntry, killToCompare: ARGKillEntry, allKills: ARGKillEntry[]) => boolean | null } = {
-    multikills: (killToCheck: ARGKillEntry, killToCompare: ARGKillEntry, allKills: ARGKillEntry[]) => {
-        const killsOfPlayerOne = allKills.filter(kill => kill.killer === killToCheck.killer).length;
-        const killsOfPlayerTwo = allKills.filter(kill => kill.killer === killToCompare.killer).length;
+const comparisons: {
+	[x: string]: (killToCheck: ARGKillEntry, killToCompare: ARGKillEntry, allKills: ARGKillEntry[]) => boolean | null;
+} = {
+	multikills: (killToCheck: ARGKillEntry, killToCompare: ARGKillEntry, allKills: ARGKillEntry[]) => {
+		const killsOfPlayerOne = allKills.filter(kill => kill.killer === killToCheck.killer).length;
+		const killsOfPlayerTwo = allKills.filter(kill => kill.killer === killToCompare.killer).length;
 
-        if (killsOfPlayerOne > killsOfPlayerTwo) {
-            return true;
-        } else if (killsOfPlayerTwo > killsOfPlayerOne) {
-            return false;
-        }
+		if (killsOfPlayerOne > killsOfPlayerTwo) {
+			return true;
+		} else if (killsOfPlayerTwo > killsOfPlayerOne) {
+			return false;
+		}
 
-        return null;
-    },
-    headshots: (killToCheck: ARGKillEntry, killToCompare: ARGKillEntry) => {
-        if (killToCheck.headshot === killToCompare.headshot) return null;
+		return null;
+	},
+	headshots: (killToCheck: ARGKillEntry, killToCompare: ARGKillEntry) => {
+		if (killToCheck.headshot === killToCompare.headshot) return null;
 
-        return killToCheck.headshot;
-    },
-    teamkill: (killToCheck: ARGKillEntry, killToCompare: ARGKillEntry) => {
-        if (killToCheck.teamkill === killToCompare.teamkill) return null;
+		return killToCheck.headshot;
+	},
+	teamkill: (killToCheck: ARGKillEntry, killToCompare: ARGKillEntry) => {
+		if (killToCheck.teamkill === killToCompare.teamkill) return null;
 
-        return killToCheck.teamkill;
-    },
-}
+		return killToCheck.teamkill;
+	}
+};
 
 const isKillBetter = (killToCheck: ARGKillEntry, killToCompare: ARGKillEntry, allKills: ARGKillEntry[]) => {
-    const order = argConfig.order.filter(item => item.active).map(item => item.id);
+	const order = argConfig.order.filter(item => item.active).map(item => item.id);
 
-    for (const orderType of order) {
-        if (orderType in comparisons) {
-            const result = comparisons[orderType](killToCheck, killToCompare, allKills);
-            if (result === null) continue;
-            return result;
-        }
-    }
+	for (const orderType of order) {
+		if (orderType in comparisons) {
+			const result = comparisons[orderType](killToCheck, killToCompare, allKills);
+			if (result === null) continue;
+			return result;
+		}
+	}
 
-    return allKills.indexOf(killToCheck) < allKills.indexOf(killToCompare);
-}
+	return allKills.indexOf(killToCheck) < allKills.indexOf(killToCompare);
+};
 
 const isKillWorthShowing = (kill: ARGKillEntry, allKills: ARGKillEntry[]) => {
-    if (kill.killerHealth === 0) return false;
+	if (kill.killerHealth === 0) return false;
 
-    const conflictingKills = allKills.filter(exampleKill => exampleKill !== kill && exampleKill.killer !== kill.killer && exampleKill.killerHealth > 0).filter(exampleKill => Math.abs(kill.timestamp - exampleKill.timestamp) <= RADIUS_TIME * 2);
+	const conflictingKills = allKills
+		.filter(
+			exampleKill => exampleKill !== kill && exampleKill.killer !== kill.killer && exampleKill.killerHealth > 0
+		)
+		.filter(
+			exampleKill => Math.abs(kill.timestamp - exampleKill.timestamp) <= argConfig.preTime + argConfig.postTime
+		);
 
-    if (!conflictingKills.length) return true;
+	if (!conflictingKills.length) return true;
 
-    const conflictingAndBetterKills = conflictingKills.filter(conflicting => isKillBetter(kill, conflicting, allKills));
+	const conflictingAndBetterKills = conflictingKills.filter(conflicting => isKillBetter(kill, conflicting, allKills));
 
-    if (!conflictingAndBetterKills.length) return true;
+	if (!conflictingAndBetterKills.length) return true;
 
-    const willConflictedNotBeShown = conflictingAndBetterKills.every(conflicting => !isKillWorthShowing(conflicting, allKills));
+	const willConflictedNotBeShown = conflictingAndBetterKills.every(
+		conflicting => !isKillWorthShowing(conflicting, allKills)
+	);
 
-    if (willConflictedNotBeShown) {
-        return true;
-    }
-    return false;
-}
+	if (willConflictedNotBeShown) {
+		return true;
+	}
+	return false;
+};
 
 export class ARGQueue {
-    private kills: ARGKillEntry[];
-    private swaps: Swap[];
-    private pgl: MIRVPGL;
+	private kills: ARGKillEntry[];
+	private swaps: Swap[];
+	private pgl: MIRVPGL;
 
-    constructor(server: SimpleWebSocketServer) {
-        this.kills = [];
-        this.swaps = [];
-        this.pgl = new MIRVPGL(server);
-    }
+	private isRecordingNow: boolean;
+	private isPlayingNow: boolean;
 
-    swapToPlayer = (player: { steamid?: string, name?: string }) => {
-        if (player.steamid) {
-            this.pgl.execute(`spec_player_by_accountid ${player.steamid}`);
-        } else if (player.name) {
-            this.pgl.execute(`spec_player_by_name ${player.name}`);
-        }
-    }
+	private playAfterRecording: boolean;
 
-    private generateSwap = (kill: ARGKillEntry, prev: ARGKillEntry | null, next: ARGKillEntry | null) => {
-        const timeToKill = kill.timestamp - now();
-        const timeToExecute = timeToKill - RADIUS_TIME;
+	constructor(server: SimpleWebSocketServer) {
+		this.kills = [];
+		this.swaps = [];
+		this.pgl = new MIRVPGL(server);
 
-        const timeout = setTimeout(() => {
-            this.swapToPlayer({ steamid: kill.killer });
-        }, timeToExecute);
+		this.isPlayingNow = false;
+		this.isRecordingNow = false;
+		this.playAfterRecording = false;
+	}
 
-        const timeouts = [timeout];
-        if (ENABLE_VMIX) {
-            const timeToMarkIn = timeToKill - RADIUS_TIME;
-            const timeToMarkOut = timeToKill + RADIUS_TIME;
+	swapToPlayer = (player: { steamid?: string; name?: string }) => {
+		if (player.steamid) {
+			this.pgl.execute(`spec_player_by_accountid ${player.steamid}`);
+		} else if (player.name) {
+			this.pgl.execute(`spec_player_by_name ${player.name}`);
+		}
+	};
 
-            if (!prev || Math.abs(prev.timestamp - kill.timestamp) > RADIUS_TIME * 2) {
-                const markInTimeout = setTimeout(async () => {
-                    await vMix.send({ Function: 'ReplayLive' });
-                    await vMix.send({ Function: 'ReplayMarkIn' });
-                }, timeToMarkIn);
+	private generateSwap = (kill: ARGKillEntry, prev: ARGKillEntry | null, next: ARGKillEntry | null) => {
+		const currentTime = now();
+		const timeToKill = kill.timestamp - currentTime;
+		let timeToSwitch = 0;
 
-                timeouts.push(markInTimeout);
-            }
+		if (prev) {
+			const timeToKillPrev = prev.timestamp - currentTime;
 
-            if (!next || Math.abs(next.timestamp - kill.timestamp) > RADIUS_TIME * 2) {
-                const markOutTimeout = setTimeout(async () => {
-                    await vMix.send({ Function: 'ReplayMarkOut' });
-                }, timeToMarkOut);
+			timeToSwitch = (timeToKill + timeToKillPrev) / 2;
+		}
 
-                timeouts.push(markOutTimeout);
-            }
-        }
+		const timeout = setTimeout(() => {
+			if (kill.weapon === 'hegrenade' && kill.victim) {
+				this.swapToPlayer({ steamid: kill.victim });
+			} else {
+				this.swapToPlayer({ steamid: kill.killer });
+			}
+		}, timeToSwitch);
 
-        this.swaps.push({ kill, timeouts });
-    }
+		const timeouts = [timeout];
+		if (ENABLE_VMIX) {
+			const timeToMarkIn = timeToKill - argConfig.preTime;
+			const timeToMarkOut = timeToKill + argConfig.postTime;
 
-    private regenerate = () => {
-        this.swaps.forEach(swap => swap.timeouts.forEach(timeout => clearTimeout(timeout)));
-        this.swaps = [];
+			if (!prev || Math.abs(prev.timestamp - kill.timestamp) > argConfig.preTime + argConfig.postTime) {
+				const markInTimeout = setTimeout(async () => {
+					if (vMix.connected()) {
+						this.isRecordingNow = true;
+						await vMix.send({ Function: 'ReplayLive' });
+						await vMix.send({ Function: 'ReplayMarkIn' });
+					}
+					//console.log(`START REPLAY FRAGMENT [${kill.name} -> ${kill.victim || 'SOMEONE'}]`,now());
+				}, timeToMarkIn);
 
-        const interestingKills = this.kills.filter(kill => isKillWorthShowing(kill, this.kills)).sort((a, b) => a.timestamp - b.timestamp);
+				timeouts.push(markInTimeout);
+			}
 
-        interestingKills.forEach((kill, index, array) => this.generateSwap(kill, array[index - 1] || null, array[index + 1] || null));
-    }
+			if (!next || Math.abs(next.timestamp - kill.timestamp) > argConfig.preTime + argConfig.postTime) {
+				const markOutTimeout = setTimeout(async () => {
+					if (vMix.connected()) await vMix.send({ Function: 'ReplayMarkOut' });
 
-    clear = async () => {
-        for (let i = 0; i < 10; i++) {
-            if (argConfig.saveClips) {
-                await vMix.send({ Function: 'ReplayMoveLastEvent', Value: '9' });
-            } else {
-                await vMix.send({ Function: 'ReplayDeleteLastEvent' });
-            }
-        }
-    }
+					//console.log(`END REPLAY FRAGMENT [${kill.name} -> ${kill.victim || 'SOMEONE'}]`,now());
 
+					this.isRecordingNow = false;
 
+					if (this.playAfterRecording) {
+						this.show();
+					}
+				}, timeToMarkOut);
 
-    show = async () => {
-        await delay(5000);
-        await vMix.send({ Function: 'ReplayPlayAllEventsToOutput' });
+				timeouts.push(markOutTimeout);
+			}
+		}
 
-    }
+		this.swaps.push({ kill, timeouts });
+	};
 
-    add = (kills: ARGKillEntry[]) => {
-        const allKills = [...this.kills, ...kills].filter(kill => kill.timestamp - 2000 >= now());
-        this.kills = allKills;
+	private regenerate = () => {
+		if (this.isRecordingNow || this.isPlayingNow) return;
 
-        this.regenerate();
-    }
+		this.swaps.forEach(swap => swap.timeouts.forEach(timeout => clearTimeout(timeout)));
+		this.swaps = [];
 
+		const interestingKills = this.kills
+			.filter(kill => isKillWorthShowing(kill, this.kills))
+			.sort((a, b) => a.timestamp - b.timestamp);
+
+		interestingKills.forEach((kill, index, array) =>
+			this.generateSwap(kill, array[index - 1] || null, array[index + 1] || null)
+		);
+	};
+
+	clear = async () => {
+		this.playAfterRecording = false;
+		setTimeout(() => {
+			if (vMix.connected()) vMix.send({ Function: 'ReplayStopEvents' });
+			//console.log(`ReplayStopEvents`,now());
+		}, 2000);
+		if (vMix.connected()) {
+			//console.log(`Moving / deleting events`,now());
+			for (let i = 0; i < 10; i++) {
+				if (argConfig.saveClips) {
+					await vMix.send({ Function: 'ReplayMoveLastEvent', Value: '9' });
+				} else {
+					await vMix.send({ Function: 'ReplayDeleteLastEvent' });
+				}
+			}
+		}
+	};
+
+	show = async () => {
+		if (this.isRecordingNow) {
+			this.playAfterRecording = true;
+			return;
+		}
+		this.playAfterRecording = false;
+		if (vMix.connected()) await vMix.send({ Function: 'ReplayPlayAllEventsToOutput' });
+		//console.log(`Play all events to output`,now());
+	};
+
+	add = (kills: ARGKillEntry[]) => {
+		const allKills = [...this.kills, ...kills].filter(kill => kill.timestamp - 2000 >= now());
+		this.kills = allKills;
+
+		this.regenerate();
+	};
 }
-
-
