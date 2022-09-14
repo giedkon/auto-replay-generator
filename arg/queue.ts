@@ -48,7 +48,6 @@ if (fs.existsSync(configPath)) {
 const vMix = new Connection(config?.vMixAddress || 'localhost');
 
 const ENABLE_VMIX = true;
-const now = () => new Date().getTime();
 
 export interface ARGKillEntry {
 	killer: string;
@@ -165,7 +164,7 @@ export class ARGQueue {
 	};
 
 	private generateSwap = (kill: ARGKillEntry, prev: ARGKillEntry | null, next: ARGKillEntry | null) => {
-		const currentTime = now();
+		const currentTime = Date.now();
 		const timeToKill = kill.timestamp - currentTime;
 		let timeToSwitch = 0;
 
@@ -265,7 +264,8 @@ export class ARGQueue {
 	};
 
 	add = (kills: ARGKillEntry[]) => {
-		const allKills = [...this.kills, ...kills].filter(kill => kill.timestamp - 2000 >= now());
+		const nowTime = Date.now();
+		const allKills = [...this.kills, ...kills].filter(kill => kill.timestamp - 2000 >= nowTime);
 		this.kills = allKills;
 
 		this.regenerate();

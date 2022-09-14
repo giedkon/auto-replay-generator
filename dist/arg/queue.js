@@ -91,7 +91,6 @@ else {
 }
 var vMix = new node_vmix_1.Connection((config === null || config === void 0 ? void 0 : config.vMixAddress) || 'localhost');
 var ENABLE_VMIX = true;
-var now = function () { return new Date().getTime(); };
 var comparisons = {
     multikills: function (killToCheck, killToCompare, allKills) {
         var killsOfPlayerOne = allKills.filter(function (kill) { return kill.killer === killToCheck.killer; }).length;
@@ -157,7 +156,7 @@ var ARGQueue = /** @class */ (function () {
             }
         };
         this.generateSwap = function (kill, prev, next) {
-            var currentTime = now();
+            var currentTime = Date.now();
             var timeToKill = kill.timestamp - currentTime;
             var timeToSwitch = 0;
             if (prev) {
@@ -284,7 +283,8 @@ var ARGQueue = /** @class */ (function () {
             });
         }); };
         this.add = function (kills) {
-            var allKills = __spreadArrays(_this.kills, kills).filter(function (kill) { return kill.timestamp - 2000 >= now(); });
+            var nowTime = Date.now();
+            var allKills = __spreadArrays(_this.kills, kills).filter(function (kill) { return kill.timestamp - 2000 >= nowTime; });
             _this.kills = allKills;
             _this.regenerate();
         };
